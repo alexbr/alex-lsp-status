@@ -314,8 +314,6 @@ end
 local notification = BaseLspNotification:new()
 
 local function handle_progress(_err, response, ctx)
-  print(vim.inspect(response))
-
   local value = response.value
   local client_id = ctx.client_id
   local client_name = vim.lsp.get_client_by_id(client_id).name
@@ -463,12 +461,12 @@ local function init()
   end
 end
 
-return {
-  ---@param opts LspNotifyConfig? Configuration.
-  setup = function(opts)
-    options = vim.tbl_deep_extend('force', options, opts or {})
-    supports_replace = check_supports_replace()
+---@param opts LspNotifyConfig? Configuration.
+M.setup = function(opts)
+  options = vim.tbl_deep_extend('force', options, opts or {})
+  supports_replace = check_supports_replace()
 
-    init()
-  end
-}
+  init()
+end
+
+return M
