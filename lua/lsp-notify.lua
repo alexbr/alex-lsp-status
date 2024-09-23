@@ -14,6 +14,11 @@ M.get_status_by_buffer = function(bufnr)
   return M.LSP_NOT_ATTACHED
 end
 
+M.on_attach = function(bufnr)
+  M._status_by_buffer[bufnr] = M.NOT_READY
+end
+
+
 --- Options for the plugin.
 ---@class LspNotifyConfig
 local options = {
@@ -38,7 +43,11 @@ local options = {
     --- Icon to show when done.
     --- Can be set to `= false` to disable only spinner.
     done = '✓'
-  }
+  },
+  --- Client message timeout in ms
+  client_timeout = 2000,
+  --- Task message timeout in ms
+  task_timeout = 4000,
 }
 
 --- Whether current notification system supports replacing notifications.
@@ -269,9 +278,9 @@ function BaseLspNotification:schedule_kill_task(client_id, task_id)
           self.clients[client_id] = nil
           self:update()
         end
-      end, 2000)
+      end, options.client_timeout)
     end
-  end, 1000)
+  end, options.task_timeout)
 end
 
 function BaseLspNotification:format_title()
