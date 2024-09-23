@@ -15,7 +15,9 @@ M.get_status_by_buffer = function(bufnr)
 end
 
 M.on_attach = function(bufnr)
-  M._status_by_buffer[bufnr] = M.NOT_READY
+  if not M._status_by_buffer[bufnr] then
+    M._status_by_buffer[bufnr] = M.NOT_READY
+  end
 end
 
 
@@ -45,9 +47,9 @@ local options = {
     done = '✓'
   },
   --- Client message timeout in ms
-  client_timeout = 2000,
+  client_timeout = 1000,
   --- Task message timeout in ms
-  task_timeout = 4000,
+  task_timeout = 2000,
 }
 
 --- Whether current notification system supports replacing notifications.
@@ -109,7 +111,7 @@ function BaseLspTask:format()
   return (
     ('  ')
     .. (string.format(
-      '%-8s',
+      '%-5s',
       self.percentage and self.percentage .. '%' or ''
     ))
     .. (self.title or '')
@@ -133,8 +135,13 @@ function BaseLspClient.new(name)
   return self
 end
 
+---@return integer
 function BaseLspClient:count_tasks()
-  return #self.tasks
+  local count = 0
+  for _ in pairs(self.tasks) do
+    count = count + 1
+  end
+  return count
 end
 
 function BaseLspClient:kill_task(task_id)
@@ -168,12 +175,21 @@ function BaseLspNotification:new()
   return vim.deepcopy(BaseLspNotification)
 end
 
+---@return integer
+function BaseLspNotification:count_clients()
+local count = 0
+  for _ in pairs(self.clients) do
+    count = count + 1
+  end
+  return count
+end
+
 function BaseLspNotification:notification_start()
   self.notification = options.notify(
     '',
     vim.log.levels.INFO,
     {
-      title = self:format_title(),
+      title = 'LSP',
       icon = (options.icons and options.icons.spinner and options.icons.spinner[1]) or nil,
       timeout = false,
       hide_from_history = false,
@@ -235,10 +251,7 @@ function BaseLspNotification:notification_end()
   )
   if self.window then
     -- Set the height back to the smallest notification size
-    vim.api.nvim_win_set_height(
-      self.window,
-      3
-    )
+    vim.api.nvim_win_set_height(self.window, 3)
   end
 
   -- Clean up and reset
@@ -252,9 +265,9 @@ function BaseLspNotification:update()
     self:notification_start()
     self.spinner = 1
     self:spinner_start()
-  elseif #self.clients > 0 then
+  elseif self:count_clients() > 0 then
     self:notification_progress()
-  elseif #self.clients == 0 then
+  elseif self:count_clients() == 0 then
     self:notification_end()
   end
 end
@@ -281,10 +294,6 @@ function BaseLspNotification:schedule_kill_task(client_id, task_id)
       end, options.client_timeout)
     end
   end, options.task_timeout)
-end
-
-function BaseLspNotification:format_title()
-  return 'LSP'
 end
 
 function BaseLspNotification:format()
@@ -341,8 +350,7 @@ local function handle_progress(_err, response, ctx)
 
   -- Get task info from notification or generate it
   if not client.tasks[task_id] then
-    client.tasks[task_id] =
-        BaseLspTask.new(value.title, value.message)
+    client.tasks[task_id] = BaseLspTask.new(value.title, value.message)
   end
   local task = client.tasks[task_id]
 
@@ -382,6 +390,10 @@ local function handle_sync(_err, response, ctx)
     return
   end
 
+  if not response or not response.fileStatuses then
+    return
+  end
+
   -- Get client info from notification or generate it
   if not notification.clients[client_id] then
     notification.clients[client_id] = BaseLspClient.new(client_name)
@@ -390,36 +402,36 @@ local function handle_sync(_err, response, ctx)
 
   local client_buffers = vim.lsp.get_buffers_by_client_id(client_id)
 
-  if response and response.fileStatuses then
-    for _, bufnr in ipairs(client_buffers) do
-      local bufname = vim.api.nvim_buf_get_name(bufnr)
-      local basename = vim.fs.basename(bufname)
-      local file_status = response.fileStatuses[bufname]
+  for _, bufnr in ipairs(client_buffers) do
+    local bufname = vim.api.nvim_buf_get_name(bufnr)
+    local basename = vim.fs.basename(bufname)
+    local file_status = response.fileStatuses[bufname]
 
-      if file_status then
-        -- Get task info from notification or generate it
-        if not client.tasks[bufname] then
-          client.tasks[bufname] = BaseLspTask.new(basename, 'Starting...')
-        end
-        local task = client.tasks[bufname]
+    if file_status then
+      local task_id = bufname
 
-        -- Ready
-        if file_status.kind == 1 then
-          local first_fire = M.get_status_by_buffer(bufnr) ~= M.READY
-          M._status_by_buffer[bufnr] = M.READY
-
-          if first_fire then
-            options.on_lsp_ready(bufnr)
-          end
-
-          task.message = 'Complete'
-          notification:schedule_kill_task(client_id, bufname)
-        else
-          task.message = file_status.statusMessage
-        end
-      else
-        M._status_by_buffer[bufnr] = M.LSP_NOT_ATTACHED
+      -- Get task info from notification or generate it
+      if not client.tasks[task_id] then
+        client.tasks[task_id] = BaseLspTask.new(basename, '')
       end
+      local task = client.tasks[task_id]
+
+      -- Ready
+      if file_status.kind == 1 then
+        local first_fire = M.get_status_by_buffer(bufnr) ~= M.READY
+        M._status_by_buffer[bufnr] = M.READY
+
+        if first_fire then
+          options.on_lsp_ready(bufnr)
+        end
+
+        task.message = 'Complete'
+        notification:schedule_kill_task(client_id, task_id)
+      else
+        task.message = file_status.statusMessage
+      end
+    else
+      M._status_by_buffer[bufnr] = M.LSP_NOT_ATTACHED
     end
   end
 
@@ -437,7 +449,6 @@ local function handle_message(_err, method, params, _client_id)
   }
   options.notify(method.message, severity[params.type], { title = 'LSP' })
 end
-
 
 -- Helper to chain multiple functions
 local chain_fn = function(fn1, fn2)
