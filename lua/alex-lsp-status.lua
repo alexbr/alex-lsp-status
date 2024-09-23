@@ -25,8 +25,8 @@ end
 ---@class LspNotifyConfig
 local options = {
   --- Function to be used for notifies.
-  --- Best works if `vim.notify` is already overwritten by `require('notify').
-  --- If no, you can manually pass `= require('notify')` here.
+  --- Works best if `vim.notify` is already overwritten by `require('notify').
+  --- If not, you can manually pass `require('notify')` here.
   notify = vim.notify,
 
   --- Exclude by client name.
@@ -59,7 +59,7 @@ local supports_replace = false
 --- Check if current notification system supports replacing notifications.
 ---@return boolean suppors
 local function check_supports_replace()
-  local n = options.notify(
+  local test_notification = options.notify(
     'lsp notify: test replace support',
     vim.log.levels.DEBUG,
     {
@@ -83,7 +83,8 @@ local function check_supports_replace()
       animate = false
     }
   )
-  local supports = pcall(options.notify, 'lsp notify: test replace support', vim.log.levels.DEBUG, { replace = n })
+  local supports = pcall(options.notify, 'lsp notify: test replace support', vim.log.levels.DEBUG,
+    { replace = test_notification })
   return supports
 end
 
@@ -177,7 +178,7 @@ end
 
 ---@return integer
 function BaseLspNotification:count_clients()
-local count = 0
+  local count = 0
   for _ in pairs(self.clients) do
     count = count + 1
   end
@@ -459,6 +460,8 @@ local chain_fn = function(fn1, fn2)
 end
 
 local function init()
+  supports_replace = check_supports_replace()
+
   -- If there is already a handler, execute it too
   if vim.lsp.handlers['$/progress'] then
     vim.lsp.handlers['$/progress'] = chain_fn(vim.lsp.handlers['$/progress'], handle_progress)
@@ -484,8 +487,6 @@ end
 ---@param opts LspNotifyConfig? Configuration.
 M.setup = function(opts)
   options = vim.tbl_deep_extend('force', options, opts or {})
-  supports_replace = check_supports_replace()
-
   init()
 end
 
