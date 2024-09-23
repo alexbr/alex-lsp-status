@@ -125,11 +125,7 @@ function BaseLspClient.new(name)
 end
 
 function BaseLspClient:count_tasks()
-  local count = 0
-  for _ in pairs(self.tasks) do
-    count = count + 1
-  end
-  return count
+  return #self.tasks
 end
 
 function BaseLspClient:kill_task(task_id)
@@ -161,14 +157,6 @@ local BaseLspNotification = {
 ---@return BaseLspNotification
 function BaseLspNotification:new()
   return vim.deepcopy(BaseLspNotification)
-end
-
-function BaseLspNotification:count_clients()
-  local count = 0
-  for _ in pairs(self.clients) do
-    count = count + 1
-  end
-  return count
 end
 
 function BaseLspNotification:notification_start()
@@ -255,9 +243,9 @@ function BaseLspNotification:update()
     self:notification_start()
     self.spinner = 1
     self:spinner_start()
-  elseif self:count_clients() > 0 then
+  elseif #self.clients > 0 then
     self:notification_progress()
-  elseif self:count_clients() == 0 then
+  elseif #self.clients == 0 then
     self:notification_end()
   end
 end
@@ -265,12 +253,16 @@ end
 function BaseLspNotification:schedule_kill_task(client_id, task_id)
   -- Wait a bit before hiding the task to show that it's complete
   vim.defer_fn(function()
+    if not self.clients[client_id] then
+      return
+    end
+
     local client = self.clients[client_id]
     client:kill_task(task_id)
     self:update()
 
     if client:count_tasks() == 0 then
-      -- Wait a bit before hiding the client to show that its' tasks are complete
+      -- Wait a bit before hiding the client to show that its tasks are complete
       vim.defer_fn(function()
         if client:count_tasks() == 0 then
           -- Make sure we don't hide a client notification if a task appeared in down time
@@ -322,6 +314,8 @@ end
 local notification = BaseLspNotification:new()
 
 local function handle_progress(_err, response, ctx)
+  print(vim.inspect(response))
+
   local value = response.value
   local client_id = ctx.client_id
   local client_name = vim.lsp.get_client_by_id(client_id).name
@@ -389,23 +383,24 @@ local function handle_sync(_err, response, ctx)
 
   local client_buffers = vim.lsp.get_buffers_by_client_id(client_id)
 
-  if response and response['fileStatuses'] then
-    print(vim.inspect(response))
-
+  if response and response.fileStatuses then
     for _, bufnr in ipairs(client_buffers) do
       local bufname = vim.api.nvim_buf_get_name(bufnr)
-      local file_status = response['fileStatuses'][bufname]
-
-      -- Get task info from notification or generate it
-      if not client.tasks[bufname] then
-        client.tasks[bufname] = BaseLspTask.new('CiderLSP', 'Test message')
-      end
-      local task = client.tasks[bufname]
+      local basename = vim.fs.basename(bufname)
+      local file_status = response.fileStatuses[bufname]
 
       if file_status then
-        if file_status['statusMessage'] == 'Ready' then
+        -- Get task info from notification or generate it
+        if not client.tasks[bufname] then
+          client.tasks[bufname] = BaseLspTask.new(basename, 'Starting...')
+        end
+        local task = client.tasks[bufname]
+
+        -- Ready
+        if file_status.kind == 1 then
           local first_fire = M.get_status_by_buffer(bufnr) ~= M.READY
           M._status_by_buffer[bufnr] = M.READY
+
           if first_fire then
             options.on_lsp_ready(bufnr)
           end
@@ -413,11 +408,16 @@ local function handle_sync(_err, response, ctx)
           task.message = 'Complete'
           notification:schedule_kill_task(client_id, bufname)
         else
-          M.status_by_buffer[bufnr] = M.LSP_NOT_ATTACHED
+          task.message = file_status.statusMessage
         end
+      else
+        M._status_by_buffer[bufnr] = M.LSP_NOT_ATTACHED
       end
     end
   end
+
+  -- Redraw notification
+  notification:update()
 end
 
 local function handle_message(_err, method, params, _client_id)
@@ -456,8 +456,8 @@ local function init()
   end
 
   -- If there is already a handler, execute it too
-  if vim.lsp_handlers['$/syncResponse'] then
-    vim.lsp.handlers['$/syncResponse'] = chain_fn(vim.lsp_handlers['$/syncResponse'], handle_sync)
+  if vim.lsp.handlers['$/syncResponse'] then
+    vim.lsp.handlers['$/syncResponse'] = chain_fn(vim.lsp.handlers['$/syncResponse'], handle_sync)
   else
     vim.lsp.handlers['$/syncResponse'] = handle_sync
   end
