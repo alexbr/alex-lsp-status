@@ -1,3 +1,19 @@
+local M = {}
+
+M.LSP_NOT_ATTACHED = 'CONNECTION_NOT_ATTEMPTED'
+M.NOT_READY = 'NOT_READY'
+M.READY = 'READY'
+
+M._status_by_buffer = {}
+
+M.get_status_by_buffer = function(bufnr)
+  bufnr = bufnr or vim.api.nvim_get_current_buf()
+  if M._status_by_buffer[bufnr] then
+    return M._status_by_buffer[bufnr]
+  end
+  return M.LSP_NOT_ATTACHED
+end
+
 --- Options for the plugin.
 ---@class LspNotifyConfig
 local options = {
@@ -9,16 +25,19 @@ local options = {
   --- Exclude by client name.
   excludes = {},
 
+  -- Function to call when LSP client is ready
+  on_lsp_ready = function(bufnr) end,
+
   --- Icons.
   --- Can be set to `= false` to disable.
   ---@type {spinner: string[] | false, done: string | false} | false
   icons = {
     --- Spinner animation frames.
     --- Can be set to `= false` to disable only spinner.
-    spinner = { "⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷" },
+    spinner = { '⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷' },
     --- Icon to show when done.
     --- Can be set to `= false` to disable only spinner.
-    done = "✓"
+    done = '✓'
   }
 }
 
@@ -30,7 +49,7 @@ local supports_replace = false
 ---@return boolean suppors
 local function check_supports_replace()
   local n = options.notify(
-    "lsp notify: test replace support",
+    'lsp notify: test replace support',
     vim.log.levels.DEBUG,
     {
       hide_from_history = true,
@@ -42,8 +61,8 @@ local function check_supports_replace()
           window, {
             width = 1,
             height = 1,
-            border = "none",
-            relative = "editor",
+            border = 'none',
+            relative = 'editor',
             row = 0,
             col = 0
           }
@@ -53,16 +72,16 @@ local function check_supports_replace()
       animate = false
     }
   )
-  local supports = pcall(options.notify, "lsp notify: test replace support", vim.log.levels.DEBUG, { replace = n })
+  local supports = pcall(options.notify, 'lsp notify: test replace support', vim.log.levels.DEBUG, { replace = n })
   return supports
 end
 
 ---@class BaseLspTask
 local BaseLspTask = {
   ---@type string?
-  title = "",
+  title = '',
   ---@type string?
-  message = "",
+  message = '',
   ---@type number?
   percentage = nil
 }
@@ -79,20 +98,20 @@ end
 
 function BaseLspTask:format()
   return (
-    ("  ")
+    ('  ')
     .. (string.format(
-      "%-8s",
-      self.percentage and self.percentage .. "%" or ""
+      '%-8s',
+      self.percentage and self.percentage .. '%' or ''
     ))
-    .. (self.title or "")
-    .. (self.title and self.message and " - " or "")
-    .. (self.message or "")
+    .. (self.title or '')
+    .. (self.title and self.message and ' - ' or '')
+    .. (self.message or '')
   )
 end
 
 ---@class BaseLspClient
 local BaseLspClient = {
-  name = "",
+  name = '',
   ---@type {any: BaseLspTask}
   tasks = {}
 }
@@ -118,15 +137,15 @@ function BaseLspClient:kill_task(task_id)
 end
 
 function BaseLspClient:format()
-  local tasks = ""
+  local tasks = ''
   for _, t in pairs(self.tasks) do
-    tasks = tasks .. t:format() .. "\n"
+    tasks = tasks .. t:format() .. '\n'
   end
 
   return (
     (self.name)
-    .. ("\n")
-    .. (tasks ~= "" and tasks:sub(1, -2) or "  Complete")
+    .. ('\n')
+    .. (tasks ~= '' and tasks:sub(1, -2) or '  Complete')
   )
 end
 
@@ -154,7 +173,7 @@ end
 
 function BaseLspNotification:notification_start()
   self.notification = options.notify(
-    "",
+    '',
     vim.log.levels.INFO,
     {
       title = self:format_title(),
@@ -197,8 +216,8 @@ function BaseLspNotification:notification_progress()
     end
   else
     -- Can't reuse same notification
-    -- Print it line-by-line to not trigger "Press ENTER or type command to continue"
-    for line in message:gmatch("[^\r\n]+") do
+    -- Print it line-by-line to not trigger 'Press ENTER or type command to continue'
+    for line in message:gmatch('[^\r\n]+') do
       options.notify(
         line,
         vim.log.levels.INFO
@@ -264,16 +283,16 @@ function BaseLspNotification:schedule_kill_task(client_id, task_id)
 end
 
 function BaseLspNotification:format_title()
-  return "LSP"
+  return 'LSP'
 end
 
 function BaseLspNotification:format()
-  local clients = ""
+  local clients = ''
   for _, c in pairs(self.clients) do
-    clients = clients .. c:format() .. "\n"
+    clients = clients .. c:format() .. '\n'
   end
 
-  return clients ~= "" and clients:sub(1, -2) or "Complete"
+  return clients ~= '' and clients:sub(1, -2) or 'Complete'
 end
 
 function BaseLspNotification:spinner_start()
@@ -300,48 +319,53 @@ function BaseLspNotification:spinner_start()
   end
 end
 
-local function has_value(tab, val)
-  for _, value in ipairs(tab) do
-    if value == val then
-      return true
-    end
-  end
-
-  return false
-end
-
 local notification = BaseLspNotification:new()
 
-local function handle_progress(_, result, context)
-  local value = result.value
-
-  local client_id = context.client_id
+local function handle_progress(_err, response, ctx)
+  local value = response.value
+  local client_id = ctx.client_id
   local client_name = vim.lsp.get_client_by_id(client_id).name
 
-  if has_value(options.excludes, client_name) then
+  if options.excludes[client_name] then
     return
   end
 
   -- Get client info from notification or generate it
-  notification.clients[client_id] =
-      notification.clients[client_id]
-      or BaseLspClient.new(client_name)
+  if not notification.clients[client_id] then
+    notification.clients[client_id] = BaseLspClient.new(client_name)
+  end
   local client = notification.clients[client_id]
 
-  local task_id = result.token
+  local task_id = response.token
+
   -- Get task info from notification or generate it
-  client.tasks[task_id] =
-      client.tasks[task_id]
-      or BaseLspTask.new(value.title, value.message)
+  if not client.tasks[task_id] then
+    client.tasks[task_id] =
+        BaseLspTask.new(value.title, value.message)
+  end
   local task = client.tasks[task_id]
 
-  if value.kind == "report" then
+  local client_buffers = vim.lsp.get_buffers_by_client_id(client_id)
+
+  if value.kind == 'report' then
+    for _, bufnr in ipairs(client_buffers) do
+      M._status_by_buffer[bufnr] = M.NOT_READY
+    end
+
     -- Task update
     task.message = value.message
     task.percentage = value.percentage
-  elseif value.kind == "end" then
+  elseif value.kind == 'end' then
+    for _, bufnr in ipairs(client_buffers) do
+      local first_fire = M.get_status_by_buffer(bufnr) ~= M.READY
+      M._status_by_buffer[bufnr] = M.READY
+      if first_fire then
+        options.on_lsp_ready(bufnr)
+      end
+    end
+
     -- Task end
-    task.message = value.message or "Complete"
+    task.message = value.message or 'Complete'
     notification:schedule_kill_task(client_id, task_id)
   end
 
@@ -349,7 +373,54 @@ local function handle_progress(_, result, context)
   notification:update()
 end
 
-local function handle_message(err, method, params, client_id)
+local function handle_sync(_err, response, ctx)
+  local client_id = ctx.client_id
+  local client_name = vim.lsp.get_client_by_id(client_id).name
+
+  if options.excludes[client_name] then
+    return
+  end
+
+  -- Get client info from notification or generate it
+  if not notification.clients[client_id] then
+    notification.clients[client_id] = BaseLspClient.new(client_name)
+  end
+  local client = notification.clients[client_id]
+
+  local client_buffers = vim.lsp.get_buffers_by_client_id(client_id)
+
+  if response and response['fileStatuses'] then
+    print(vim.inspect(response))
+
+    for _, bufnr in ipairs(client_buffers) do
+      local bufname = vim.api.nvim_buf_get_name(bufnr)
+      local file_status = response['fileStatuses'][bufname]
+
+      -- Get task info from notification or generate it
+      if not client.tasks[bufname] then
+        client.tasks[bufname] = BaseLspTask.new('CiderLSP', 'Test message')
+      end
+      local task = client.tasks[bufname]
+
+      if file_status then
+        if file_status['statusMessage'] == 'Ready' then
+          local first_fire = M.get_status_by_buffer(bufnr) ~= M.READY
+          M._status_by_buffer[bufnr] = M.READY
+          if first_fire then
+            options.on_lsp_ready(bufnr)
+          end
+
+          task.message = 'Complete'
+          notification:schedule_kill_task(client_id, bufname)
+        else
+          M.status_by_buffer[bufnr] = M.LSP_NOT_ATTACHED
+        end
+      end
+    end
+  end
+end
+
+local function handle_message(_err, method, params, _client_id)
   -- Table from LSP severity to VIM severity.
   local severity = {
     vim.log.levels.ERROR,
@@ -357,37 +428,45 @@ local function handle_message(err, method, params, client_id)
     vim.log.levels.INFO,
     vim.log.levels.INFO, -- Map both `hint` and `info` to `info`
   }
-  options.notify(method.message, severity[params.type], { title = "LSP" })
+  options.notify(method.message, severity[params.type], { title = 'LSP' })
+end
+
+
+-- Helper to chain multiple functions
+local chain_fn = function(fn1, fn2)
+  return function(...)
+    fn1(...)
+    fn2(...)
+  end
 end
 
 local function init()
-  if vim.lsp.handlers["$/progress"] then
-    -- There was already a handler, execute it too
-    local old = vim.lsp.handlers["$/progress"]
-    vim.lsp.handlers["$/progress"] = function(...)
-      old(...)
-      handle_progress(...)
-    end
+  -- If there is already a handler, execute it too
+  if vim.lsp.handlers['$/progress'] then
+    vim.lsp.handlers['$/progress'] = chain_fn(vim.lsp.handlers['$/progress'], handle_progress)
   else
-    vim.lsp.handlers["$/progress"] = handle_progress
+    vim.lsp.handlers['$/progress'] = handle_progress
   end
 
-  if vim.lsp.handlers["window/showMessage"] then
-    -- There was already a handler, execute it too
-    local old = vim.lsp.handlers["window/showMessage"]
-    vim.lsp.handlers["window/showMessage"] = function(...)
-      old(...)
-      handle_message(...)
-    end
+  -- If there is already a handler, execute it too
+  if vim.lsp.handlers['window/showMessage'] then
+    vim.lsp.handlers['window/showMessage'] = chain_fn(vim.lsp.handlers['window/showMessage'], handle_message)
   else
-    vim.lsp.handlers["window/showMessage"] = handle_message
+    vim.lsp.handlers['window/showMessage'] = handle_message
+  end
+
+  -- If there is already a handler, execute it too
+  if vim.lsp_handlers['$/syncResponse'] then
+    vim.lsp.handlers['$/syncResponse'] = chain_fn(vim.lsp_handlers['$/syncResponse'], handle_sync)
+  else
+    vim.lsp.handlers['$/syncResponse'] = handle_sync
   end
 end
 
 return {
   ---@param opts LspNotifyConfig? Configuration.
   setup = function(opts)
-    options = vim.tbl_deep_extend("force", options, opts or {})
+    options = vim.tbl_deep_extend('force', options, opts or {})
     supports_replace = check_supports_replace()
 
     init()
