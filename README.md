@@ -1,2 +1,2 @@
-# lsp-notify
-Nvim LSP notification handler
+# alex-lsp-status
+Neovim LSP status and notification handler.
