@@ -95,7 +95,9 @@ local BaseLspTask = {
   ---@type string?
   message = '',
   ---@type number?
-  percentage = nil
+  percentage = nil,
+  -- @type vim.log.levels
+  level = vim.log.levels.INFO,
 }
 
 ---@param title string
@@ -111,10 +113,7 @@ end
 function BaseLspTask:format()
   return (
     ('  ')
-    .. (string.format(
-      '%-5s',
-      self.percentage and self.percentage .. '%' or ''
-    ))
+    .. (self.percentage and string.format('%-5s', self.percentage .. '%') or '')
     .. (self.title or '')
     .. (self.title and self.message and ' - ' or '')
     .. (self.message or '')
@@ -149,16 +148,34 @@ function BaseLspClient:kill_task(task_id)
   self.tasks[task_id] = nil
 end
 
+function BaseLspClient:get_level()
+  local level = vim.log.levels.INFO
+
+  for _, t in pairs(self.tasks) do
+    if (t.level and t.level > level) then
+      level = t.level
+    end
+  end
+
+  return level
+end
+
 function BaseLspClient:format()
   local tasks = ''
+  local task_count = self:count_tasks()
+  local count = 0
   for _, t in pairs(self.tasks) do
-    tasks = tasks .. t:format() .. '\n'
+    tasks = tasks .. t:format()
+    if (count < task_count) then
+      tasks = tasks .. '\n'
+    end
+    count = count + 1
   end
 
   return (
     (self.name)
     .. ('\n')
-    .. (tasks ~= '' and tasks:sub(1, -2) or '  Complete')
+    .. (tasks ~= '' and tasks or '  Complete')
   )
 end
 
@@ -196,11 +213,13 @@ function BaseLspNotification:notification_start()
       hide_from_history = false,
       on_open = function(window)
         self.window = window
+        vim.api.nvim_win_set_width(self.window, 80)
       end
     }
   )
+
   if not supports_replace then
-    -- `options.notify` will not assign `self.notification` if can't be replaced,
+    -- `options.notify` will not assign `self.notification` if it can't be replaced,
     -- so do it manually here
     self.notification = true
   end
@@ -209,33 +228,30 @@ end
 function BaseLspNotification:notification_progress()
   local message = self:format()
   local message_lines = select(2, message:gsub('\n', '\n'))
+  local level = self:get_level()
 
   if supports_replace then
     -- Can reuse same notification
     self.notification = options.notify(
       message,
-      vim.log.levels.INFO,
+      level,
+      --vim.log.levels.INFO,
       {
         replace = self.notification,
         hide_from_history = false,
       }
     )
+
     if self.window then
       -- Update height because `nvim-notify` notifications don't do it automatically
       -- Can cover other notifications
-      vim.api.nvim_win_set_height(
-        self.window,
-        3 + message_lines
-      )
+      vim.api.nvim_win_set_height(self.window, 3 + message_lines)
     end
   else
     -- Can't reuse same notification
     -- Print it line-by-line to not trigger 'Press ENTER or type command to continue'
     for line in message:gmatch('[^\r\n]+') do
-      options.notify(
-        line,
-        vim.log.levels.INFO
-      )
+      options.notify(line, vim.log.levels.INFO)
     end
   end
 end
@@ -295,6 +311,19 @@ function BaseLspNotification:schedule_kill_task(client_id, task_id)
       end, options.client_timeout)
     end
   end, options.task_timeout)
+end
+
+function BaseLspNotification:get_level()
+  local level = vim.log.levels.INFO
+
+  for _, c in pairs(self.clients) do
+    local client_level = c:get_level()
+    if client_level > level then
+      level = client_level
+    end
+  end
+
+  return level
 end
 
 function BaseLspNotification:format()
@@ -426,9 +455,19 @@ local function handle_sync(_err, response, ctx)
           options.on_lsp_ready(bufnr)
         end
 
+        task.level = vim.log.levels.INFO
         task.message = 'Complete'
         notification:schedule_kill_task(client_id, task_id)
+      elseif file_status.kind == 3 then
+        -- Warning
+        task.level = vim.log.levels.WARN
+        task.message = file_status.statusMessage
+      elseif file_status.kind == 4 then
+        -- Error
+        task.level = vim.log.levels.ERROR
+        task.message = file_status.statusMessage
       else
+        task.level = vim.log.levels.INFO
         task.message = file_status.statusMessage
       end
     else
