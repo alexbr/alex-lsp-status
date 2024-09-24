@@ -46,9 +46,13 @@ local options = {
     --- Can be set to `= false` to disable only spinner.
     done = '✓'
   },
-  --- Client message timeout in ms
+  --- Width of the notification window.
+  window_width = 60,
+
+  --- Client message timeout in ms.
   client_timeout = 1000,
-  --- Task message timeout in ms
+
+  --- Task message timeout in ms.
   task_timeout = 2000,
 }
 
@@ -111,13 +115,11 @@ function BaseLspTask.new(title, message)
 end
 
 function BaseLspTask:format()
-  return (
-    ('  ')
-    .. (self.percentage and string.format('%-5s', self.percentage .. '%') or '')
-    .. (self.title or '')
-    .. (self.title and self.message and ' - ' or '')
-    .. (self.message or '')
-  )
+  return '  '
+      .. (self.percentage and string.format('%-5s', self.percentage .. '%') or '')
+      .. (self.title or '')
+      .. (self.title and self.message and ' - ' or '')
+      .. (self.message or '')
 end
 
 ---@class BaseLspClient
@@ -162,21 +164,12 @@ end
 
 function BaseLspClient:format()
   local tasks = ''
-  local task_count = self:count_tasks()
-  local count = 0
   for _, t in pairs(self.tasks) do
-    tasks = tasks .. t:format()
-    if (count < task_count) then
-      tasks = tasks .. '\n'
-    end
-    count = count + 1
+    tasks = tasks .. t:format() .. '\n'
   end
 
-  return (
-    (self.name)
-    .. ('\n')
-    .. (tasks ~= '' and tasks or '  Complete')
-  )
+  return
+      self.name .. '\n' .. (tasks ~= '' and tasks:sub(1, -2) or '  Complete')
 end
 
 ---@class BaseLspNotification
@@ -213,7 +206,7 @@ function BaseLspNotification:notification_start()
       hide_from_history = false,
       on_open = function(window)
         self.window = window
-        vim.api.nvim_win_set_width(self.window, 60)
+        vim.api.nvim_win_set_width(self.window, options.window_width)
       end
     }
   )
@@ -227,7 +220,7 @@ end
 
 function BaseLspNotification:notification_progress()
   local message = self:format()
-  local message_lines = select(2, message:gsub('\n', '\n'))
+  local _, message_lines = message:gsub('\n', '\n')
   local level = self:get_level()
 
   if supports_replace then
@@ -235,7 +228,6 @@ function BaseLspNotification:notification_progress()
     self.notification = options.notify(
       message,
       level,
-      --vim.log.levels.INFO,
       {
         replace = self.notification,
         hide_from_history = false,
