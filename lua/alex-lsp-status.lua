@@ -213,7 +213,7 @@ function BaseLspNotification:notification_start()
       hide_from_history = false,
       on_open = function(window)
         self.window = window
-        vim.api.nvim_win_set_width(self.window, 80)
+        vim.api.nvim_win_set_width(self.window, 60)
       end
     }
   )
