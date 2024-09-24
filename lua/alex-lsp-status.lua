@@ -363,7 +363,6 @@ local notification = BaseLspNotification:new()
 --- @return BaseLspClient
 local function get_or_create_client(client_id, client_name)
   if not notification.clients[client_id] then
-    print('new client for ' .. client_name)
     notification.clients[client_id] = BaseLspClient.new(client_name)
   end
   return notification.clients[client_id]
@@ -378,7 +377,6 @@ end
 local function get_or_create_task(client, task_id, title, message)
   message = message or ''
   if not client.tasks[task_id] then
-    print('new task for ' .. task_id)
     client.tasks[task_id] = BaseLspTask.new(title, message)
   end
   return client.tasks[task_id]
@@ -426,7 +424,6 @@ local function handle_progress(_err, response, ctx)
 end
 
 local function handle_sync(_err, response, ctx)
-  print(vim.inspect(response))
   local client_id = ctx.client_id
   local client_name = vim.lsp.get_client_by_id(client_id).name
 
@@ -451,8 +448,6 @@ local function handle_sync(_err, response, ctx)
 
       -- Ready
       if file_status.kind == 1 then
-        print('marking complete ' .. basename)
-
         -- TODO get rid of status by buffer, just use the task.status
         local first_fire = not client.tasks[task_id] or client.tasks[task_id].status ~= M.READY
         if first_fire then
