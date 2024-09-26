@@ -32,7 +32,8 @@ local options = {
   --- Exclude by client name.
   excludes = {},
 
-  -- Function to call when LSP client is ready
+  --- Function to call when LSP client is ready
+  --- @type function bufnr integer
   on_lsp_ready = function(bufnr) end,
 
   --- Icons.
@@ -66,32 +67,29 @@ local supports_replace = false
 --- Check if current notification system supports replacing notifications.
 ---@return boolean suppors
 local function check_supports_replace()
-  local test_notification = options.notify(
-    'lsp notify: test replace support',
-    vim.log.levels.DEBUG,
-    {
-      hide_from_history = true,
-      on_open = function(window)
-        -- If window is hidden, `nvim-notify` prints errors
-        -- This shrinks notifications and puts it in a corner where it will not be seen
-        vim.api.nvim_win_set_buf(window, vim.api.nvim_create_buf(false, true))
-        vim.api.nvim_win_set_config(
-          window, {
-            width = 1,
-            height = 1,
-            border = 'none',
-            relative = 'editor',
-            row = 0,
-            col = 0
-          }
-        )
-      end,
-      timeout = 1,
-      animate = false
-    }
-  )
-  local supports = pcall(options.notify, 'lsp notify: test replace support', vim.log.levels.DEBUG,
-    { replace = test_notification })
+  local notify_options = {
+    hide_from_history = true,
+    on_open = function(window)
+      -- If window is hidden, `nvim-notify` prints errors
+      -- This shrinks notifications and puts it in a corner where it will not be seen
+      vim.api.nvim_win_set_buf(window, vim.api.nvim_create_buf(false, true))
+      vim.api.nvim_win_set_config(
+        window, {
+          width = 1,
+          height = 1,
+          border = 'none',
+          relative = 'editor',
+          row = 0,
+          col = 0
+        }
+      )
+    end,
+    timeout = 1,
+    animate = false
+  }
+  local test_msg = 'lsp notify: test replace support'
+  local test_notification = options.notify(test_msg, vim.log.levels.DEBUG, notify_options)
+  local supports = pcall(options.notify, test_msg, vim.log.levels.DEBUG, { replace = test_notification })
   return supports
 end
 
@@ -103,7 +101,7 @@ local BaseLspTask = {
   message = '',
   --- @type number?
   percentage = nil,
-  --- @type vim.log.levels
+  --- @type integer see vim.log.levels
   level = vim.log.levels.INFO,
   --- @type string
   status = M.LSP_NOT_ATTACHED,
@@ -119,7 +117,7 @@ function BaseLspTask.new(title, message)
   return self
 end
 
-function BaseLspTask:format()
+function BaseLspTask:get_msg()
   return '  '
       .. (self.percentage and string.format('%-5s', self.percentage .. '%') or '')
       .. (self.title or '')
@@ -127,22 +125,22 @@ function BaseLspTask:format()
       .. (self.message or '')
 end
 
----@class BaseLspClient
+--- @class BaseLspClient
 local BaseLspClient = {
   name = '',
-  ---@type {any: BaseLspTask}
+  --- @type {any: BaseLspTask}
   tasks = {}
 }
 
----@param name string
----@return BaseLspClient
+--- @param name string
+--- @return BaseLspClient
 function BaseLspClient.new(name)
   local self = vim.deepcopy(BaseLspClient)
   self.name = name
   return self
 end
 
----@return integer
+--- @return integer
 function BaseLspClient:count_tasks()
   local count = 0
   for _ in pairs(self.tasks) do
@@ -167,17 +165,27 @@ function BaseLspClient:get_level()
   return level
 end
 
+function BaseLspClient:get_lines()
+  local lines = { self.name }
+  local i = 2
+  for _, t in pairs(self.tasks) do
+    lines[i] = t:get_msg()
+    i = i + 1
+  end
+  return lines
+end
+
 function BaseLspClient:format()
   local tasks = ''
   for _, t in pairs(self.tasks) do
-    tasks = tasks .. t:format() .. '\n'
+    tasks = tasks .. t:get_msg() .. '\n'
   end
 
   return
       self.name .. '\n' .. (tasks ~= '' and tasks:sub(1, -2) or '  Complete')
 end
 
----@class BaseLspNotification
+--- @class BaseLspNotification
 local BaseLspNotification = {
   spinner = 1,
   ---@type {integer: BaseLspClient}
@@ -186,12 +194,12 @@ local BaseLspNotification = {
   window = nil
 }
 
----@return BaseLspNotification
+--- @return BaseLspNotification
 function BaseLspNotification:new()
   return vim.deepcopy(BaseLspNotification)
 end
 
----@return integer
+--- @return integer
 function BaseLspNotification:count_clients()
   local count = 0
   for _ in pairs(self.clients) do
@@ -202,16 +210,18 @@ end
 
 function BaseLspNotification:notification_start()
   self.notification = options.notify(
-    '',
+    'Opening',
     vim.log.levels.INFO,
     {
       title = 'LSP',
       icon = (options.icons and options.icons.spinner and options.icons.spinner[1]) or nil,
+      render = 'wrapped-default',
+      max_width = options.window_width,
       timeout = false,
       hide_from_history = false,
       on_open = function(window)
         self.window = window
-        vim.api.nvim_win_set_width(self.window, options.window_width)
+        --vim.api.nvim_win_set_width(self.window, options.window_width)
       end
     }
   )
@@ -224,8 +234,17 @@ function BaseLspNotification:notification_start()
 end
 
 function BaseLspNotification:notification_progress()
+  local message_lines = self:get_lines()
+  local line_count = 0
+  for _, line in pairs(message_lines) do
+    line_count = line_count + 1
+    if string.len(line) > options.window_width then
+      line_count = line_count + 1
+    end
+  end
+
   local message = self:format()
-  local _, message_lines = message:gsub('\n', '\n')
+  --local _, line_count = message:gsub('\n', '\n')
   local level = self:get_level()
 
   if supports_replace then
@@ -239,7 +258,7 @@ function BaseLspNotification:notification_progress()
     if self.window then
       -- Update height because `nvim-notify` notifications don't do it automatically
       -- Can cover other notifications
-      vim.api.nvim_win_set_height(self.window, 3 + message_lines)
+      vim.api.nvim_win_set_height(self.window, 3 + line_count)
     end
   else
     -- Can't reuse same notification
@@ -321,6 +340,32 @@ function BaseLspNotification:get_level()
   return level
 end
 
+function BaseLspNotification:format_message()
+  local message = ''
+  local message_lines = self:get_lines()
+  local line_count = 0
+  for _, line in pairs(message_lines) do
+    line_count = line_count + 1
+    if string.len(line) > options.window_width then
+      line_count = line_count + 1
+    end
+    message = message .. '' .. '\n'
+  end
+  return line_count, message
+end
+
+function BaseLspNotification:get_lines()
+  local lines = {}
+  local i = 0
+  for _, c in pairs(self.clients) do
+    local task_lines = c:get_lines()
+    for j, line in pairs(task_lines) do
+      lines[i + j] = line
+    end
+  end
+  return lines
+end
+
 function BaseLspNotification:format()
   local clients = ''
   for _, c in pairs(self.clients) do
@@ -337,6 +382,7 @@ function BaseLspNotification:spinner_start()
     if supports_replace then
       -- Don't spam spinner updates if notification can't be replaced
       self.notification = options.notify(
+        ---@diagnostic disable-next-line: param-type-mismatch
         nil,
         nil,
         {
@@ -423,6 +469,12 @@ local function handle_progress(_err, response, ctx)
   notification:update()
 end
 
+local function update_task(task, status, level, message)
+  task.status = status
+  task.level = level
+  task.message = message
+end
+
 local function handle_sync(_err, response, ctx)
   local client_id = ctx.client_id
   local client_name = vim.lsp.get_client_by_id(client_id).name
@@ -435,6 +487,7 @@ local function handle_sync(_err, response, ctx)
     return
   end
 
+  local new_client = not notification.clients[client_id]
   local client = get_or_create_client(client_id, client_name)
   local client_buffers = vim.lsp.get_buffers_by_client_id(client_id)
 
@@ -456,34 +509,31 @@ local function handle_sync(_err, response, ctx)
 
         -- TODO: only create task if task state (eg. status) has changed to
         -- avoid regenerating tasks that were killed and have no new meaningful updates
-        local task = get_or_create_task(client, task_id, basename)
-        task.level = vim.log.levels.INFO
-        task.message = 'Complete'
-        task.status = M.READY
-        M._status_by_buffer[bufnr] = M.READY
+        if new_client or first_fire then
+          local task = get_or_create_task(client, task_id, basename)
+          update_task(task, M.READY, vim.log.levels.INFO, 'Complete')
+          M._status_by_buffer[bufnr] = M.READY
 
-        -- Schedule task message removal
-        notification:schedule_kill_task(client_id, task_id)
+          -- Schedule task message removal
+          notification:schedule_kill_task(client_id, task_id)
+        end
       elseif file_status.kind == 3 then
         -- Warning
         local task = get_or_create_task(client, task_id, basename)
-        task.level = vim.log.levels.WARN
-        task.message = file_status.statusMessage
-        task.status = M.NOT_READY
+        update_task(task, M.NOT_READY, vim.log.levels.WARN, file_status.statusMessaage)
         M._status_by_buffer[bufnr] = M.NOT_READY
+        print(task.message)
       elseif file_status.kind == 4 then
         -- Error
         local task = get_or_create_task(client, task_id, basename)
-        task.level = vim.log.levels.ERROR
-        task.message = file_status.statusMessage
-        task.status = M.NOT_READY
+        update_task(task, M.NOT_READY, vim.log.levels.ERROR, file_status.statusMessage)
         M._status_by_buffer[bufnr] = M.NOT_READY
+        print(task.message)
       else
         local task = get_or_create_task(client, task_id, basename)
-        task.level = vim.log.levels.INFO
-        task.message = file_status.statusMessage
-        task.status = M.NOT_READY
+        update_task(task, M.NOT_READY, vim.log.levels.INFO, file_status.statusMessage)
         M._status_by_buffer[bufnr] = M.NOT_READY
+        print(task.message)
       end
     else
       M._status_by_buffer[bufnr] = M.LSP_NOT_ATTACHED
