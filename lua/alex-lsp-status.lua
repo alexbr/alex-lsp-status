@@ -125,6 +125,13 @@ function BaseLspTask:get_msg()
       .. (self.message or '')
 end
 
+--- Update the task with new attributes.
+function BaseLspTask:update_task(status, level, message)
+  self.status = status
+  self.level = level
+  self.message = message
+end
+
 --- @class BaseLspClient
 local BaseLspClient = {
   name = '',
@@ -169,7 +176,7 @@ function BaseLspClient:get_lines()
   local lines = { self.name }
   local i = 2
   for _, t in pairs(self.tasks) do
-    lines[i] = t:get_msg()
+    lines[i] = '  ' .. t:get_msg()
     i = i + 1
   end
   return lines
@@ -237,10 +244,7 @@ function BaseLspNotification:notification_progress()
   local message_lines = self:get_lines()
   local line_count = 0
   for _, line in pairs(message_lines) do
-    line_count = line_count + 1
-    if string.len(line) > options.window_width then
-      line_count = line_count + 1
-    end
+    line_count = line_count + math.ceil(string.len(line) / options.window_width)
   end
 
   local message = self:format()
@@ -382,7 +386,7 @@ function BaseLspNotification:spinner_start()
     if supports_replace then
       -- Don't spam spinner updates if notification can't be replaced
       self.notification = options.notify(
-        ---@diagnostic disable-next-line: param-type-mismatch
+      ---@diagnostic disable-next-line: param-type-mismatch
         nil,
         nil,
         {
@@ -469,10 +473,10 @@ local function handle_progress(_err, response, ctx)
   notification:update()
 end
 
-local function update_task(task, status, level, message)
-  task.status = status
-  task.level = level
-  task.message = message
+local function clean_msg(msg)
+  msg = msg or ''
+  msg, _ = msg:gsub('%[([Bb]uild)%]%(([^)]+)%)', '%1 %2')
+  return msg
 end
 
 local function handle_sync(_err, response, ctx)
@@ -498,6 +502,8 @@ local function handle_sync(_err, response, ctx)
 
     if file_status then
       local task_id = bufname
+      print(basename .. ': ' .. file_status.statusMessage)
+      local file_status_msg = clean_msg(file_status.statusMessage)
 
       -- Ready
       if file_status.kind == 1 then
@@ -511,7 +517,7 @@ local function handle_sync(_err, response, ctx)
         -- avoid regenerating tasks that were killed and have no new meaningful updates
         if new_client or first_fire then
           local task = get_or_create_task(client, task_id, basename)
-          update_task(task, M.READY, vim.log.levels.INFO, 'Complete')
+          task:update_task(M.READY, vim.log.levels.INFO, 'Complete')
           M._status_by_buffer[bufnr] = M.READY
 
           -- Schedule task message removal
@@ -520,20 +526,17 @@ local function handle_sync(_err, response, ctx)
       elseif file_status.kind == 3 then
         -- Warning
         local task = get_or_create_task(client, task_id, basename)
-        update_task(task, M.NOT_READY, vim.log.levels.WARN, file_status.statusMessaage)
+        task:update_task(M.NOT_READY, vim.log.levels.WARN, file_status_msg)
         M._status_by_buffer[bufnr] = M.NOT_READY
-        print(task.message)
       elseif file_status.kind == 4 then
         -- Error
         local task = get_or_create_task(client, task_id, basename)
-        update_task(task, M.NOT_READY, vim.log.levels.ERROR, file_status.statusMessage)
+        task:update_task(M.NOT_READY, vim.log.levels.ERROR, file_status_msg)
         M._status_by_buffer[bufnr] = M.NOT_READY
-        print(task.message)
       else
         local task = get_or_create_task(client, task_id, basename)
-        update_task(task, M.NOT_READY, vim.log.levels.INFO, file_status.statusMessage)
+        task:update_task(M.NOT_READY, vim.log.levels.INFO, file_status_msg)
         M._status_by_buffer[bufnr] = M.NOT_READY
-        print(task.message)
       end
     else
       M._status_by_buffer[bufnr] = M.LSP_NOT_ATTACHED
