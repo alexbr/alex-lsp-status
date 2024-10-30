@@ -475,7 +475,7 @@ end
 
 local function clean_msg(msg)
   msg = msg or ''
-  msg, _ = msg:gsub('%[([Bb]uild)%]%(([^)]+)%)', '%1 %2')
+  msg, _ = msg:gsub('%[([^]]+)%]%(([^)]+)%)', '%1 %2')
   return msg
 end
 
